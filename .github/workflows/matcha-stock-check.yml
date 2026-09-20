@@ -33,9 +33,12 @@ jobs:
           check() {
             NAME="$1"
             URL="$2"
-            PAGE=$(curl -sL --max-time 30 -A "$UA" "$URL")
+            CODE=$(curl -sL --max-time 30 -A "$UA" -o page.html -w "%{http_code}" "$URL")
+            PAGE=$(cat page.html)
+            echo "$NAME: HTTP $CODE, size $(wc -c < page.html) bytes"
 
-            if ! echo "$PAGE" | grep -q "Product Detail"; then
+
+            if ! echo "$PAGE" | grep -qi "product detail"; then
               echo "$NAME: fetch failed or layout changed, skipping"
               return
             fi
