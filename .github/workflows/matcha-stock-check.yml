@@ -1,0 +1,73 @@
+name: matcha-stock-check
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: matcha-stock-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check stock and notify
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+          mkdir -p state
+
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            curl -s -H "Title: Test" -d "測試通知：設定成功" "https://ntfy.sh/$NTFY_TOPIC"
+          fi
+
+          check() {
+            NAME="$1"
+            URL="$2"
+            PAGE=$(curl -sL --max-time 30 -A "$UA" "$URL")
+
+            if ! echo "$PAGE" | grep -q "Product Detail"; then
+              echo "$NAME: fetch failed or layout changed, skipping"
+              return
+            fi
+
+            if echo "$PAGE" | grep -qi "currently out of stock"; then
+              NEW="out"
+            else
+              NEW="in"
+            fi
+
+            OLD=$(cat "state/$NAME.txt" 2>/dev/null || echo "out")
+            echo "$NAME: $OLD -> $NEW"
+
+            if [ "$NEW" = "in" ] && [ "$OLD" != "in" ]; then
+              curl -s \
+                -H "Title: $NAME may be IN STOCK" \
+                -H "Priority: urgent" \
+                -H "Tags: tea,rotating_light" \
+                -H "Click: $URL" \
+                -d "丸久小山園 $NAME 好像有貨了，快去登入確認尺寸！" \
+                "https://ntfy.sh/$NTFY_TOPIC"
+            fi
+
+            echo "$NEW" > "state/$NAME.txt"
+          }
+
+          check "Isuzu" "https://www.marukyu-koyamaen.co.jp/english/shop/products/1191040c1"
+          check "Tenju" "https://www.marukyu-koyamaen.co.jp/english/shop/products/1111020c1"
+
+      - name: Save state
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add state
+          git diff --cached --quiet || (git commit -m "update stock state" && git push)
